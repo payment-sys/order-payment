@@ -1,0 +1,57 @@
+package com.v_payment.pay.payment.controller.dto.res;
+
+import com.v_payment.pay.payment.domain.entity.PaymentStatus;
+import com.v_payment.pay.payment.infra.result.AbortedResult;
+import com.v_payment.pay.payment.infra.result.DoneResult;
+import com.v_payment.pay.payment.infra.result.ExpiredResult;
+import com.v_payment.pay.payment.infra.result.UnknownResult;
+
+import java.time.LocalDateTime;
+
+public record ApprovalRes(
+        String idempotencyKey,
+        PaymentStatus status,
+        Long totalAmount,
+        LocalDateTime approvedAt,
+        String receiptUrl
+) {
+    public static ApprovalRes from(DoneResult doneResult) {
+        return new ApprovalRes(
+                doneResult.idempotencyKey(),
+                PaymentStatus.DONE,
+                doneResult.totalAmount(),
+                doneResult.approvedAt(),
+                doneResult.receipt() == null ? null : doneResult.receipt().url()
+        );
+    }
+
+    public static ApprovalRes from(AbortedResult abortedResult) {
+        return new ApprovalRes(
+                abortedResult.idempotencyKey(),
+                PaymentStatus.ABORTED,
+                null,
+                null,
+                null
+        );
+    }
+
+    public static ApprovalRes from(UnknownResult unknownResult) {
+        return new ApprovalRes(
+                unknownResult.idempotencyKey(),
+                PaymentStatus.UNKNOWN,
+                null,
+                null,
+                null
+        );
+    }
+
+    public static ApprovalRes from(ExpiredResult expiredResult) {
+        return new ApprovalRes(
+                expiredResult.idempotencyKey(),
+                PaymentStatus.EXPIRED,
+                null,
+                null,
+                null
+        );
+    }
+}

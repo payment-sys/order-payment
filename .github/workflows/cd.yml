@@ -1,0 +1,83 @@
+name: CD - order-payment
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Existing GHCR image tag (defaults to the current commit SHA)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: 소스코드 가져오기
+        uses: actions/checkout@v4
+
+      - name: AWS 인증 (GitHub OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: 배포용 환경 변수 보안 저장
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          PARAMETER_NAME: /order-payment/deploy/${{ github.run_id }}-${{ github.run_attempt }}
+          ORDER_PAYMENT_MYSQL_URL: ${{ secrets.ORDER_PAYMENT_MYSQL_URL }}
+          ORDER_PAYMENT_MYSQL_USERNAME: ${{ secrets.ORDER_PAYMENT_MYSQL_USERNAME }}
+          ORDER_PAYMENT_MYSQL_PASSWORD: ${{ secrets.ORDER_PAYMENT_MYSQL_PASSWORD }}
+          KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
+          TOSS_PAYMENT_SECRET: ${{ secrets.TOSS_PAYMENT_SECRET }}
+        run: |
+          set -euo pipefail
+          umask 077
+          env_file="$RUNNER_TEMP/order-payment.env"
+          parameter_file="$RUNNER_TEMP/order-payment-parameter.json"
+          test -n "$ORDER_PAYMENT_MYSQL_URL"
+          test -n "$ORDER_PAYMENT_MYSQL_USERNAME"
+          test -n "$ORDER_PAYMENT_MYSQL_PASSWORD"
+          test -n "$KAFKA_BOOTSTRAP_SERVERS"
+          test -n "$TOSS_PAYMENT_SECRET"
+          python3 - "$env_file" <<'PY'
+          import os
+          import sys
+
+          names = (
+              "ORDER_PAYMENT_MYSQL_URL",
+              "ORDER_PAYMENT_MYSQL_USERNAME",
+              "ORDER_PAYMENT_MYSQL_PASSWORD",
+              "KAFKA_BOOTSTRAP_SERVERS",
+              "TOSS_PAYMENT_SECRET",
+          )
+          with open(sys.argv[1], "w", encoding="utf-8") as env_file:
+              for name in names:
+                  value = os.environ[name].replace("'", "\\'")
+                  env_file.write(f"{name}='{value}'\n")
+          PY
+          jq -n --arg name "$PARAMETER_NAME" --rawfile value "$env_file" \
+            '{Name:$name, Type:"SecureString", Value:$value, Overwrite:true}' > "$parameter_file"
+          aws ssm put-parameter --region "$AWS_REGION" --cli-input-json "file://$parameter_file"
+
+      - name: order-payment를 SSM으로 배포
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          DEPLOY_INSTANCE_IDS: ${{ vars.ORDER_SERVICE_INSTANCE_IDS }}
+          DEPLOY_ENV_PARAMETER: /order-payment/deploy/${{ github.run_id }}-${{ github.run_attempt }}
+          IMAGE: ghcr.io/${{ github.repository }}:${{ inputs.image_tag || github.sha }}
+        run: bash .github/scripts/deploy-all.sh order-payment
+
+      - name: 배포용 환경 변수 보안 저장 삭제
+        if: always()
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          PARAMETER_NAME: /order-payment/deploy/${{ github.run_id }}-${{ github.run_attempt }}
+        run: aws ssm delete-parameter --region "$AWS_REGION" --name "$PARAMETER_NAME" || true

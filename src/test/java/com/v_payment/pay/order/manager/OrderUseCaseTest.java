@@ -1,0 +1,141 @@
+package com.v_payment.pay.order.manager;
+
+import com.v_payment.pay.order.application.OrderUseCase;
+import com.v_payment.pay.order.application.QuantityChangeSummaryUseCase;
+import com.v_payment.pay.order.entrypoint.dto.req.OrderCreateReq;
+import com.v_payment.pay.order.entrypoint.dto.req.OrderItemCreateReq;
+import com.v_payment.pay.order.entrypoint.dto.res.OrderCreateRes;
+import com.v_payment.pay.order.domain.order.Order;
+import com.v_payment.pay.order.domain.order.OrderItemInfo;
+import com.v_payment.pay.order.domain.order.OrderItemStatus;
+import com.v_payment.pay.order.domain.order.OrderStatus;
+import com.v_payment.pay.order.domain.outbox.QuantityChangeOutbox;
+import com.v_payment.pay.order.domain.outbox.QuantityChangeOutboxStatus;
+import com.v_payment.pay.order.domain.outbox.QuantityChangeOutboxType;
+import com.v_payment.pay.order.infrastructure.kafka.message.QuantityChangeSummaryEvent;
+import com.v_payment.pay.order.infrastructure.kafka.message.QuantityChangeSummaryStatus;
+import com.v_payment.pay.order.infrastructure.persistence.repository.OrderRepository;
+import com.v_payment.pay.order.infrastructure.persistence.repository.QuantityChangeOutboxRepository;
+import com.v_payment.pay.payment.domain.entity.PaymentMethod;
+import com.v_payment.pay.product.domain.entity.Product;
+import com.v_payment.pay.product.repository.ProductRepository;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@SpringBootTest
+class OrderUseCaseTest {
+    @Autowired
+    OrderUseCase orderUsecase;
+
+    @Autowired
+    QuantityChangeSummaryUseCase quantityChangeSummaryUseCase;
+
+    @Autowired
+    OrderRepository orderRepository;
+
+    @Autowired
+    ProductRepository productRepository;
+
+    @Autowired
+    QuantityChangeOutboxRepository quantityChangeOutboxRepository;
+    @Test
+    @Transactional
+    void create() {
+        // given
+        Product productA = productRepository.save(Product.create("product-A", 10_000L, 10));
+        Product productB = productRepository.save(Product.create("product-B", 5_000L, 10));
+
+        OrderCreateReq req = new OrderCreateReq(
+                PaymentMethod.CARD,
+                List.of(
+                        new OrderItemCreateReq(productA.getId(), 2),
+                        new OrderItemCreateReq(productB.getId(), 3)
+                )
+        );
+
+        // when
+        OrderCreateRes res = orderUsecase.create(req);
+
+        // then
+        Order order = orderRepository.findAll().get(0);
+
+        assertThat(res.orderCode()).isEqualTo(order.getOrderCode());
+        assertThat(order.getOrderItemInfos()).isEmpty();
+        assertThat(order.getTotalAmount()).isEqualTo(0L);
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.CREATED);
+
+        QuantityChangeOutbox outbox = quantityChangeOutboxRepository.findAll().get(0);
+        assertThat(outbox.getOrderCode()).isEqualTo(order.getOrderCode());
+        assertThat(outbox.getType()).isEqualTo(QuantityChangeOutboxType.DECREASE);
+        assertThat(outbox.getStatus()).isEqualTo(QuantityChangeOutboxStatus.READY);
+        assertThat(outbox.getRequestedOrder().getQuantityMap())
+                .containsEntry(productA.getId(), 2)
+                .containsEntry(productB.getId(), 3);
+        assertThat(outbox.getQuantityChangeMessages())
+                .extracting("changeCount")
+                .containsExactlyInAnyOrder(-2, -3);
+    }
+    @Test
+    @Transactional
+    void finalizeOrderSummaryBatchWithCompensation() {
+        // given
+        Product productA = productRepository.save(Product.create("product-A", 10_000L, 10));
+        Product productB = productRepository.save(Product.create("product-B", 5_000L, 10));
+        OrderCreateRes res = orderUsecase.create(new OrderCreateReq(
+                PaymentMethod.CARD,
+                List.of(
+                        new OrderItemCreateReq(productA.getId(), 2),
+                        new OrderItemCreateReq(productB.getId(), 3)
+                )
+        ));
+
+        // when
+        quantityChangeSummaryUseCase.finalizeOrderSummaryBatch(List.of(new QuantityChangeSummaryEvent(
+                res.orderCode(),
+                QuantityChangeSummaryStatus.FAILED,
+                List.of(
+                        OrderItemInfo.create(productA.getId(), productA.getName(), productA.getPrice(), 2, OrderItemStatus.CHANGED),
+                        OrderItemInfo.create(productB.getId(), productB.getName(), productB.getPrice(), 3, OrderItemStatus.FAILED)
+                )
+        )));
+
+        // then
+        Order order = orderRepository.findByOrderCode(res.orderCode()).orElseThrow();
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.LACK_QUANTITY);
+        assertThat(order.getOrderItemInfos()).hasSize(2);
+        assertThat(order.getTotalAmount()).isEqualTo(35_000L);
+
+        List<QuantityChangeOutbox> outboxes = quantityChangeOutboxRepository.findAll();
+        assertThat(outboxes).hasSize(2);
+        QuantityChangeOutbox compensationOutbox = outboxes.stream()
+                .filter(outbox -> outbox.getType() == QuantityChangeOutboxType.COMPENSATE)
+                .findFirst()
+                .orElseThrow();
+        assertThat(compensationOutbox.getRequestedOrder().getQuantityMap())
+                .containsEntry(productA.getId(), 2)
+                .doesNotContainKey(productB.getId());
+        assertThat(compensationOutbox.getQuantityChangeMessages())
+                .extracting("changeCount")
+                .containsExactly(2);
+    }
+    @Test
+    void createWithNotFoundProduct() {
+        // given
+        OrderCreateReq req = new OrderCreateReq(
+                PaymentMethod.CARD,
+                List.of(new OrderItemCreateReq(999L, 1))
+        );
+
+        OrderCreateRes res = orderUsecase.create(req);
+
+        assertThat(orderRepository.findByOrderCode(res.orderCode())).isPresent();
+        assertThat(quantityChangeOutboxRepository.findAll()).hasSize(1);
+    }
+}
