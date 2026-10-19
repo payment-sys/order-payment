@@ -8,6 +8,11 @@ aws_region="${4:?AWS region is required}"
 env_parameter="${5:?SecureString parameter name is required}"
 compose_file="${compose_dir}/docker-compose.yml"
 
+if ! command -v aws >/dev/null 2>&1; then
+  echo "AWS CLI is required on the instance to retrieve deployment environment variables." >&2
+  exit 127
+fi
+
 if [[ ! -f "$compose_file" ]]; then
   echo "Compose file not found: ${compose_file}" >&2
   exit 1
@@ -27,9 +32,13 @@ sudo mv "$env_file" "${compose_dir}/.env"
 trap - EXIT
 
 cd "$compose_dir"
+instance_name="$(hostname)"
+private_ip="$(hostname -I | awk '{print $1}')"
 sudo env IMAGE_NAME="$image" SERVICE_NAME="${SERVICE_NAME:-order-payment}" \
+  INSTANCE_NAME="$instance_name" PRIVATE_IP="$private_ip" \
   docker compose -f "$compose_file" pull "$service"
 sudo env IMAGE_NAME="$image" SERVICE_NAME="${SERVICE_NAME:-order-payment}" \
+  INSTANCE_NAME="$instance_name" PRIVATE_IP="$private_ip" \
   docker compose -f "$compose_file" up \
   -d \
   --no-deps \
