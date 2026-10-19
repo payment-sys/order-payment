@@ -1,5 +1,8 @@
-﻿.gradle/
-build/
+.gradle/
+build/*
+!build/libs/
+build/libs/*
+!build/libs/app.jar
 .git/
 .env
 logs/

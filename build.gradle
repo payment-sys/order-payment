@@ -61,4 +61,5 @@ tasks.withType(Test).configureEach {
 
 tasks.named('bootJar') {
     mainClass = 'com.v_payment.pay.OrderPaymentApplication'
+    archiveFileName = 'app.jar'
 }
