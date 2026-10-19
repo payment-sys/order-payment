@@ -37,4 +37,12 @@ sudo env IMAGE_NAME="$image" SERVICE_NAME="${SERVICE_NAME:-order-payment}" \
   --wait-timeout 120 \
   "$service"
 
+if [[ "$service" == "app" ]]; then
+  sudo docker compose -f "$compose_file" up \
+    -d \
+    --wait \
+    --wait-timeout 120 \
+    alloy
+fi
+
 echo "${service} is running with ${image}."
