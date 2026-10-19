@@ -47,7 +47,9 @@ sudo env IMAGE_NAME="$image" SERVICE_NAME="${SERVICE_NAME:-order-payment}" \
   "$service"
 
 if [[ "$service" == "app" ]]; then
-  sudo docker compose -f "$compose_file" up \
+  sudo env IMAGE_NAME="$image" SERVICE_NAME="${SERVICE_NAME:-order-payment}" \
+    INSTANCE_NAME="$instance_name" PRIVATE_IP="$private_ip" \
+    docker compose -f "$compose_file" up \
     -d \
     --wait \
     --wait-timeout 120 \
