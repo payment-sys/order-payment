@@ -76,7 +76,7 @@ jobs:
           DEPLOY_INSTANCE_IDS: ${{ vars.ORDER_SERVICE_INSTANCE_IDS }}
           DEPLOY_ENV_PARAMETER: /order-payment/deploy/${{ github.run_id }}-${{ github.run_attempt }}
           IMAGE: ghcr.io/${{ github.repository }}:${{ inputs.image_tag || github.event.workflow_run.head_sha || github.sha }}
-        run: bash .github/scripts/deploy-all.sh order-payment
+        run: bash .github/scripts/deploy-all.sh app
 
       - name: 배포용 환경 변수 보안 저장 삭제
         if: always()

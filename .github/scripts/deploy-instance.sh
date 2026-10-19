@@ -16,7 +16,7 @@ fi
 env_file="$(sudo mktemp "${compose_dir}/.env.XXXXXX")"
 trap 'sudo rm -f "$env_file"' EXIT
 
-sudo aws ssm get-parameter \
+aws ssm get-parameter \
   --region "$aws_region" \
   --name "$env_parameter" \
   --with-decryption \
@@ -27,8 +27,10 @@ sudo mv "$env_file" "${compose_dir}/.env"
 trap - EXIT
 
 cd "$compose_dir"
-sudo env IMAGE="$image" docker compose -f "$compose_file" pull "$service"
-sudo env IMAGE="$image" docker compose -f "$compose_file" up \
+sudo env IMAGE_NAME="$image" SERVICE_NAME="${SERVICE_NAME:-order-payment}" \
+  docker compose -f "$compose_file" pull "$service"
+sudo env IMAGE_NAME="$image" SERVICE_NAME="${SERVICE_NAME:-order-payment}" \
+  docker compose -f "$compose_file" up \
   -d \
   --no-deps \
   --wait \
