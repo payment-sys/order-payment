@@ -17,8 +17,8 @@ spring:
     password: ${ORDER_PAYMENT_MYSQL_PASSWORD:${MYSQL_PASSWORD}}
     hikari:
       auto-commit: false
-      maximum-pool-size: 18
-      minimum-idle: 18
+      maximum-pool-size: 24
+      minimum-idle: 24
       connection-timeout: 1000
       validation-timeout: 1000
       idle-timeout: 600000
